@@ -1,0 +1,4 @@
+logging:
+  level:
+    org.springframework.cache: TRACE
+    org.springframework.web: TRACE

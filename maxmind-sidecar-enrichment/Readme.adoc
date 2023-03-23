@@ -1,0 +1,335 @@
+## Docker Compose Setup.
+
+### Steps
+. Cd into folder ( where docker-compose.yml is)
+. Open Terminal
+. setup following environment variables
+
+  export CCLOUD_KAFKA_BOOTSTRAP_SERVER=<CCLOUD-BOOTSTRAP-SERVER>
+  export CCLOUD_KAFKA_API_KEY=<CCLOUD-API-KAFKA-KEY>
+  export CCLOUD_KAFKA_API_SECRET=<CCLOUD-API-KAFKA-SECRET>
+  export CCLOUD_SASL_JAAS_CONFIG="org.apache.kafka.common.security.plain.PlainLoginModule required username=\"${CCLOUD_KAFKA_API_KEY}\" password=\"${CCLOUD_KAFKA_API_SECRET}\";"
+  export SCHEMA_REGISTRY_URL=https://<SCHEMA-REGISTRY-URL>
+  export SCHEMA_BASIC_AUTH_CREDENTIALS_SOURCE="USER_INFO"
+  export SCHEMA_REGISTRY_BASIC_AUTH_USER_INFO=<SR-API-KEY>:<SR-API-SECRET>
+
+
+
+
+. For custom connectors. Download the conneector zip file to the /data/tmp foleder and then start docker-compose. local files can also be installed usince conflunet-hub
+
+ for e.g   confluent-hub install --no-prompt /tmp/streamthoughts-kafka-connect-file-pulse-2.9.0.zip
+
+. Command
+
+ docker-compose up
+
+. Check if all services ( connect, ksqlDB,  is up)
+apply necessary connector configurations
+
+. Create necessary topic to load "Files to Kafka topic"
+
+
+
+. Apply Necessary connector configurations as given below
+. Drop related  files to ./data/ingest/XXXX folder (CSV,json,XML)
+
+
+## Connector Configurations:
+
+
+ === Customer lookup topic - Datagen
+curl -i -X PUT http://localhost:8083/connectors/datagen_local_02/config \
+-H "Content-Type: application/json" \
+-d '{
+"connector.class": "io.confluent.kafka.connect.datagen.DatagenConnector",
+"key.converter": "org.apache.kafka.connect.storage.StringConverter",
+"kafka.topic": "customers",
+"quickstart": "shoe_customers",
+"max.interval": 1000,
+"iterations": 10000000,
+"tasks.max": "1"
+}'
+
+
+
+ === Custome DataGenerator for specirfic usecase, dependds on the schema file used
+curl -i -X PUT http://localhost:8083/connectors/datagen_local_03/config \
+-H "Content-Type: application/json" \
+-d '{
+"connector.class": "io.confluent.kafka.connect.datagen.DatagenConnector",
+"key.converter": "org.apache.kafka.connect.storage.StringConverter",
+"kafka.topic": "clickstream-contentid",
+"schema.filename": "/data/datagen-custom-schema/test-clickstream-contentid.avro",
+"max.interval": 1000,
+"iterations": 10000000,
+"tasks.max": "1"
+}'
+
+
+ === Connector curl commands
+curl -s http://localhost:8083/connectors/datagen_local_01/status
+curl -s http://localhost:8083/connectors/datagen_local_02/status
+curl -s http://localhost:8083/connectors/datagen_local_03/status
+curl -i -X PUT http://localhost:8083/connectors/datagen_local_01/pause
+curl -i -X PUT http://localhost:8083/connectors/datagen_local_02/pause
+curl -i -X PUT http://localhost:8083/connectors/datagen_local_03/pause
+curl -i -X PUT http://localhost:8083/connectors/datagen_local_01/resume
+curl -i -X PUT http://localhost:8083/connectors/datagen_local_02/resume
+curl -i -X PUT http://localhost:8083/connectors/datagen_local_03/resume
+curl -i -X DELETE http://localhost:8083/connectors/datagen_local_01
+curl -i -X DELETE http://localhost:8083/connectors/datagen_local_02
+curl -i -X DELETE http://localhost:8083/connectors/datagen_local_03
+curl -i -X DELETE http://localhost:8083/connectors/tracks-json-filepulse-00/
+ === cCloud commands
+ confluent kafka topic delete _docker-connect-configs --force
+ confluent kafka topic delete _docker-connect-offsets --force
+ confluent kafka topic delete _docker-connect-status --force
+ confluent kafka topic delete  assetid-lookup-topic --force
+ confluent kafka topic delete  clickstream-contentid --force
+ confluent kafka topic delete  connect-file-pulse-status --force
+ confluent kafka topic delete  enriched-stream --force
+ confluent kafka topic delete  customers --force
+
+ === create necessary topics
+ confluent kafka topic create "clickstream-contentid" --partitions 6
+ confluent kafka topic create enriched-stream --partitions 6
+ confluent kafka topic create assetid-lookup-topic --partitions 6 --config cleanup.policy=compact
+ confluent kafka topic create customers --partitions 6 --config cleanup.policy=compact
+
+
+
+
+=== JSON file load to topic configuration
+ ### JSON files load to topic configuration
+curl \
+    -i -X PUT -H "Accept:application/json" \
+    -H  "Content-Type:application/json" http://localhost:8083/connectors/tracks-json-filepulse-00/config \
+    -d '{
+  "connector.class": "io.streamthoughts.kafka.connect.filepulse.source.FilePulseSourceConnector",
+  "fs.listing.class": "io.streamthoughts.kafka.connect.filepulse.fs.LocalFSDirectoryListing",
+  "fs.listing.directory.path":"/data/ingest/",
+  "fs.listing.filters":"io.streamthoughts.kafka.connect.filepulse.fs.filter.RegexFileListFilter",
+  "fs.listing.interval.ms": "10000",
+  "file.filter.regex.pattern":".*\\.json$",
+  "tasks.reader.class": "io.streamthoughts.kafka.connect.filepulse.fs.reader.LocalRowFileInputReader",
+  "offset.strategy":"name",
+  "fs.cleanup.policy.class": "io.streamthoughts.kafka.connect.filepulse.fs.clean.LogCleanupPolicy",
+  "fs.cleanup.policy.triggered.on":"COMMITTED",
+  "filters": "ParseJSON,setKey",
+  "filters.ParseJSON.type":"io.streamthoughts.kafka.connect.filepulse.filter.JSONFilter",
+  "filters.ParseJSON.source":"message",
+  "filters.ParseJSON.merge":"true",
+  "filters.setKey.type"                : "io.streamthoughts.kafka.connect.filepulse.filter.AppendFilter",
+  "filters.setKey.field"               : "$key",
+  "filters.setKey.value"               : "$value.adServerContentId",
+  "tasks.file.status.storage.topic.partitions": 10,
+  "tasks.file.status.storage.topic.replication.factor": 3,
+  "tasks.max": 1,
+  "topic"  : "assetid-lookup-topic",
+  "tasks.file.status.storage.bootstrap.servers"  : "pkc-n00kk.us-east-1.aws.confluent.cloud:9092",
+  "tasks.file.status.storage.topic"  : "connect-file-pulse-status",
+  "tasks.file.status.storage.producer.security.protocol" : "SASL_SSL",
+  "tasks.file.status.storage.producer.ssl.endpoint.identification.algorithm": "https",
+  "tasks.file.status.storage.producer.sasl.mechanism" : "PLAIN",
+  "tasks.file.status.storage.producer.sasl.jaas.config" : "org.apache.kafka.common.security.plain.PlainLoginModule required username=\"<API-KEY>\" password=\"<API-SECRET>";",
+  "tasks.file.status.storage.producer.request.timeout.ms" : "20000",
+  "tasks.file.status.storage.producer.retry.backoff.ms" : "500",
+  "tasks.file.status.storage.consumer.security.protocol"  : "SASL_SSL",
+  "tasks.file.status.storage.consumer.ssl.endpoint.identification.algorithm": "https",
+  "tasks.file.status.storage.consumer.sasl.mechanism": "PLAIN",
+  "tasks.file.status.storage.consumer.sasl.jaas.config"  : "org.apache.kafka.common.security.plain.PlainLoginModule required username=\"<API-KEY>\" password=\"<API-SECRET>";",
+  "tasks.file.status.storage.consumer.request.timeout.ms"   : "20000",
+  "tasks.file.status.storage.consumer.retry.backoff.ms"   : "500"
+    }'
+
+### CSV files to asset-id topic configuration
+ === This sample takes a CSV file and the data is reKeyed before landing into a kafka topic
+ === CSV files to asset-id topic configuration
+curl -i -X PUT -H "Accept:application/json" \
+-H  "Content-Type:application/json" http://localhost:8083/connectors/source-csv-01/config \
+-d '{
+"connector.class": "io.streamthoughts.kafka.connect.filepulse.source.FilePulseSourceConnector",
+  "filters": "ParseCSVLine,setKey",
+  "filters.ParseCSVLine.extract.column.name": "headers",
+  "filters.ParseCSVLine.trim.column": "true",
+  "filters.ParseCSVLine.type": "io.streamthoughts.kafka.connect.filepulse.filter.CSVFilter",
+  "filters.setKey.type"                : "io.streamthoughts.kafka.connect.filepulse.filter.AppendFilter",
+  "filters.setKey.field"               : "$key",
+  "filters.setKey.value"               : "$value.asset",
+  "fs.cleanup.policy.class": "io.streamthoughts.kafka.connect.filepulse.fs.clean.LogCleanupPolicy",
+  "fs.cleanup.policy.triggered.on":"COMMITTED",
+  "fs.listing.class": "io.streamthoughts.kafka.connect.filepulse.fs.LocalFSDirectoryListing",
+  "fs.listing.directory.path":"/data/ingest/",
+  "fs.listing.filters":"io.streamthoughts.kafka.connect.filepulse.fs.filter.RegexFileListFilter",
+  "fs.listing.interval.ms": "10000",
+  "file.filter.regex.pattern":".*\\.csv$",
+  "offset.policy.class":"io.streamthoughts.kafka.connect.filepulse.offset.DefaultSourceOffsetPolicy",
+  "offset.attributes.string": "name",
+  "skip.headers": "1",
+  "tasks.reader.class": "io.streamthoughts.kafka.connect.filepulse.fs.reader.LocalRowFileInputReader",
+  "tasks.file.status.storage.topic.partitions": 10,
+  "tasks.file.status.storage.topic.replication.factor": 3,
+  "tasks.max": 1,
+"topic"                              : "raw-data-json-topic",
+"tasks.file.status.storage.bootstrap.servers"                             : "pkc-n00kk.us-east-1.aws.confluent.cloud:9092",
+"tasks.file.status.storage.topic"                                         : "connect-file-pulse-status",
+"tasks.file.status.storage.producer.security.protocol"                    : "SASL_SSL",
+"tasks.file.status.storage.producer.ssl.endpoint.identification.algorithm": "https",
+"tasks.file.status.storage.producer.sasl.mechanism"                       : "PLAIN",
+"tasks.file.status.storage.producer.sasl.jaas.config"                     : "org.apache.kafka.common.security.plain.PlainLoginModule required username=\"<API-KEY>\" password=\"<API-SECRET>";",
+"tasks.file.status.storage.producer.request.timeout.ms"                   : "20000",
+"tasks.file.status.storage.producer.retry.backoff.ms"                     : "500",
+"tasks.file.status.storage.consumer.security.protocol"                    : "SASL_SSL",
+"tasks.file.status.storage.consumer.ssl.endpoint.identification.algorithm": "https",
+"tasks.file.status.storage.consumer.sasl.mechanism"                       : "PLAIN",
+"tasks.file.status.storage.consumer.sasl.jaas.config"                     : "org.apache.kafka.common.security.plain.PlainLoginModule required username=\"<API-KEY>\" password=\"<API-SECRET>";",
+"tasks.file.status.storage.consumer.request.timeout.ms"                   : "20000",
+"tasks.file.status.storage.consumer.retry.backoff.ms"                     : "500"
+}'
+
+
+
+
+
+==== Additional information regarding Connector configurations
+
+* if need to enable Schema registry for the Feed. Please replace the following line with 4 lines as given below:
+** Line to be Replaced
+
+ "value.converter": "org.apache.kafka.connect.json.JsonConverter",
+
+** Replace with
+
+ "value.converter": "io.confluent.connect.json.JsonSchemaConverter",
+ "value.converter.schema.registry.url": "https://<SCHEMA-REGISTRY-URL>",
+ "value.converter.basic.auth.credentials.source": "USER_INFO",
+ "value.converter.schema.registry.basic.auth.user.info": "<SR_API_KEY>:<SR_API_SECRET>",
+
+== MaxMind Data Refresh
+ STEPS:
+ 1) Go to GET http://localhost:8080/actuator
+ 2) POST http://localhost:8080/actuator/refresh ( with empty payload)
+ 3) Check application log if it is trying a refresh
+        MaxMindDBConfig: Trying to load GeoLite2-Country database...
+        GeoLocationConfig: Database was loaded successfully.
+ 4) After a refresh endpoint is invoked by POST, only during the next Request to the Maxmind DB , Stream input is paused and then the refresh is triggered.
+ 5) Refresh only takes few milliseconds.
+
+ Maxmind can be loaded using SideCar pattern in Kubernetes .
+ - Deploy Springboot Streaming application in a docker container,
+ - Deploy  maxmind Refresh in a seperate docker. and mount the files to a shared directory.
+ - Make sure sprintboot docker container is also mounted with the same share.
+ - Both the docker containers are deployed in a Single Pod.
+ - SpringBoot actualtor Refresh endpoint can be used to trigger maxmind data(mmdb) refresh.
+ - MaxmindDB is on memory mapped DB.
+
+
+
+
+== Streaming application Reset  command
+
+ == STEPS
+ - Delete enriched or ouptut topic of streaming application
+ - Create new topic for output topic
+ - Apply the kafka-streams-appication-reset cli
+
+ confluent kafka topic delete officeid-keyed-topic
+
+ confluent kafka topic create officeid-keyed-topic --partitions 3
+
+*** To Reset StreamApplication 1
+
+ kafka-streams-application-reset \
+    --application-id '-poc-stream-app' \
+    --bootstrap-servers <SERVER>>:9092 \
+    --config-file /<PATH-TO-PROJECT>/a-streaming-poc/src/main/resources/java.config \
+    --input-topics input-topic-one,input-topic-two,input-topic-three  \
+    --force
+
+
+
+
+== KSQL
+** Run KSQL cli
+
+   ### KSQLDB: (check for server name on docker compose)
+   docker exec -it ksqldb-cli ksql http://ksqldb:8088
+
+** Sample KSQL queries
+
+   # KSQLDB queries (Samples)
+   SET 'auto.offset.reset' = 'earliest';
+   Show topics; show all topics;
+   list topics;
+   print 'server1.dbo.customers' from beginning limit 1;
+   print datagen_clickstream from beginning limit 1 ;
+
+
+   print 'any-topic' from beginning limit 1;
+
+
+
+== Other cCloud commands
+** Handy cCloud cli commands
+
+  # cCloud Environment command
+  confluent environment list
+  confluent environment use <SELECT-DEFAULT-ENV>
+  # cCloud kafak cluster level commands
+  confluent kafka cluster list
+  confluent kafka cluster use lkc-XXXXX
+  confluent kafka cluster describe lkc-XXXXXX
+  # Topic level commands
+  confluent kafka topic list
+  confluent kafka topic describe myTopic2
+  confluent kafka topic update datagen-topic --config cleanup.policy=compact
+  confluent kafka topic produce myTopic3 ( produce messages to topic)
+  confluent kafka topic consume myTopic3 --from-beginning ( consume messages from topic)
+  confluent kafka topic delete myTopic3
+
+
+ confluent kafka topic delete name-of-topic
+
+
+
+== Kafka Consumer groups listing command
+  ./bin/kafka-consumer-groups \
+   --bootstrap-server <BROKER>>:9092 \
+   --command-config /streaming-poc/src/main/resources/java.config \
+   --describe --all-groups --all-topics | awk '{print $1,  $2, $3, $4,  $5,  $6}' > test.csv
+
+== Ksql Sample Commands
+
+   docker exec -it ksqldb-cli ksql http://ksqldb:8088
+   https://docs.ksqldb.io/en/latest/reference/sql/data-types/
+   SET 'auto.offset.reset' = 'earliest';
+   show topics extended;
+   describe test1 extended;
+
+   drop type RESERVATION;
+   drop type OFFICELOCATION;
+
+   drop stream "keyed-stream";
+   drop table "tenriched-table";
+
+
+   == Defining a datatype and using it in create stream
+   CREATE TYPE RESERVATION AS STRUCT<companyId VARCHAR, controlNumber VARCHAR, controlType VARCHAR, date VARCHAR, time VARCHAR>;
+   CREATE TYPE OFFICELOCATION AS STRUCT<amaOfficeId VARCHAR, descriptoin VARCHAR>;
+
+
+   CREATE STREAM "keyed-stream"  (
+      recordLocator VARCHAR,
+      somenumber VARCHAR,
+      someofficeid VARCHAR,
+      reservation RESERVATION,
+      ticketReferences ARRAY<VARCHAR>
+      eventref ARRAY<VARCHAR>
+   ) WITH (
+      KAFKA_TOPIC='keyed-topic',
+      VALUE_FORMAT='JSON'
+   );
+
+
+ SELECT *, ROWPARTITION, ROWOFFSET, ROWTIME FROM "keyed-stream" WHERE locator = '24P4MH' EMIT CHANGES;
