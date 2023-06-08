@@ -1,6 +1,14 @@
 ## Scenario
 
- ![scenario.png](assets/scenario.png)  
+:imagesdir: img
+image:scenario.png[]
+
+MaxmindDB is a geolocation DB , which is distributed as  a file. MaxmindDB loads file as a Memory Mapped file.
+
+For side car pattern, INside a pod there are two docker containers, One is the sprintboot application , the other is refreshes the datafile (maxmind updates). There is a shared volume mount, which is used by the sprinboot to reload the applciation context.
+
+This significantly reduces the streaming application downtime.
+The refresh is controller from an actuator endpoint
 
 ## Docker Compose Setup.
 
