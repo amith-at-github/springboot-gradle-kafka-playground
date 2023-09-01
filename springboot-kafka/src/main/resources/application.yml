@@ -1,0 +1,9 @@
+mykafka:
+  bootstrapServers: localhost:9092
+  keySerializer: org.apache.kafka.common.serialization.StringSerializer
+  keyDeserializer: org.apache.kafka.common.serialization.StringDeserializer
+  valueSerializer: org.apache.kafka.common.serialization.StringSerializer
+  valueDeserializer: org.apache.kafka.common.serialization.StringDeserializer
+  consumer:
+    topic: test
+
